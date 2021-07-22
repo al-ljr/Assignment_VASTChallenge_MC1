@@ -1,0 +1,13 @@
+name: "Assignment_VASTChallenge_MC1"
+title: "VAST Challenge - Mini Challenge 1"
+description: |
+  VAST Challenge - Mini Challenge 1
+output_dir: "_site"
+navbar:
+  right:
+    - text: "Home"
+      href: index.html
+    - text: "About"
+      href: about.html
+output: distill::distill_article
+

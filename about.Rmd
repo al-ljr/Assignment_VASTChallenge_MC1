@@ -1,0 +1,11 @@
+---
+title: "About this blog"
+description: |
+  This blog is prepared for ISSS608 - Visual Analytics with credits to Professor Kam Tin Seong for his dedicated and wonderful guidance on our Visual Analytics learning journey. 
+  
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+```
