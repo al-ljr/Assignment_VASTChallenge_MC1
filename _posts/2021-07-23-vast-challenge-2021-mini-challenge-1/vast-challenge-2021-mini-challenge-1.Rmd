@@ -1,5 +1,6 @@
 ---
 title: "VAST Challenge 2021: Mini Challenge 1"
+preview: img/Relationships between suspects and org.PNG
 author:
   - name: Lim Jin Ru (Alethea)
     url: {}
@@ -18,7 +19,7 @@ knitr::opts_chunk$set(echo = FALSE)
 
 # Overview
 
-This assignment is based on [**VAST Challenge 2021**](https://vast-challenge.github.io/2021/). The selected challenge topic for this assignment is [**Mini-Challenge 1**](https://vast-challenge.github.io/2021/MC1.html). 
+This assignment is based on the mini-challenge in [**VAST Challenge 2021**](https://vast-challenge.github.io/2021/). The selected challenge topic for this assignment is [**Mini-Challenge 1**](https://vast-challenge.github.io/2021/MC1.html). 
 
 In the roughly twenty years that Tethys-based GAStech has been operating a natural gas production site in the island country of Kronos, it has produced remarkable profits and developed strong relationships with the government of Kronos. However, GAStech has not been as successful in demonstrating environmental stewardship.
 
@@ -115,6 +116,10 @@ The focus of examination is targeted in the year 2014 as the kidnapping occurred
 news_articles <- dplyr::filter(news_articles , grepl('2014', Text))
 ```
 
+Before diving into the biases, below is a word cloud to provide an overview of related people, places and events in 2014, the year of the kidnapping.
+
+![](img/wordcloud.PNG)
+
 Topic modelling of the news sources were performed to allow us to have a good overview of the bias via the topics. 
 
 The summary of the topics are as below:
@@ -184,7 +189,7 @@ The fact that the email was sent on Sunday might also be due to some level of ur
 ![](img/ARISE_email_2.PNG)
 
 <aside>
-The visNetwork package was used for the interactive visNetwork diagram. There is a manipulation function that allows us to push the nodes further apart so that they do not look so cluttered and obscure readers' readability. 
+The visNetwork package was used for the interactive visNetwork diagram. There is a manipulation feature that allows us to push the nodes further apart so that they do not look so cluttered and obscure readers' readability. When this feature is set to "True", an accompanying "edit" icon appears on the diagram to indicate that this feature is now active for the diagram. 
 </aside>
  
 The suspicious “ARISE” email was exchanged among the above group of colleagues. It was first sent from Rachel to Ruscella and then there was an exchange of information among Hennie, Ruscella, Loreto, Isia, Inga and Minke, suggesting an ongoing conversation about this email among the group. 
@@ -212,7 +217,7 @@ The fourth cluster is the administration cluster connected with some members of 
 It is also interesting to note that the news articles mentioned that Edvard Vann, the guard of safety at GAStech was questioned for hours on suspicion of his involvement with the kidnapping due to the similarity between his name and that of a Protector of Kronos member. However,in the above diagram, it is revealed that Edvard is not only not connected to the suspected group of people with the suspicious “Arise” email, he also does not correspond with any of the other colleagues outside office hours, suggesting that he does not have a strong personal relationship with his colleagues. Unless he uses other modes of communication, this does suggest that he may indeed not be related to the suspected “Protector of Kronos” member.  
  
  
-*GAStech employee's personal relationship with the government (military)*
+*Relationships with the government (military)*
 
 An honorable discharge occurs when a military service member received a good or excellent rating for their service time, by exceeding standards for performance and personal conduct. If a service member’s performance is satisfactory but the individual failed to meet all expectations of conduct for military members, the discharge is considered a General Discharge. To receive a General Discharge from the military, there has to be some form of nonjudicial punishment to correct unacceptable military behavior or failure to meet military standards^[https://themilitarywallet.com/types-of-military-discharges/]. 
 
