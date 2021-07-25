@@ -1,0 +1,1689 @@
+---
+title: "Mini-Challenge 1"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(fig.retina=3, 
+                      echo = TRUE,
+                      eval = TRUE,
+                      message = FALSE, 
+                      error = FALSE, 
+                      warning = FALSE)
+```
+
+# Installing and Launching R Packages
+
+This code chunk installs and launches relevant R packages. 
+
+```{r}
+packages = c('tidytext', 'widyr', 'wordcloud', 'DT', 'ggwordcloud', 'dplyr', 'textplot', 'lubridate', 'hms', 'tidyverse', 'tidygraph', 'ggraph', 'igraph', 'scales', 'tidyr', 'purrrlyr', 'RColorBrewer', 'ggplot2', 'htmlwidgets', 'plotly', 'tidyverse', 'extrafont', 'stringr', 'corporaexplorer', 'stringi', 'stringr', 'tibble', 'rvest', 'readr', 'purrr', 'future', 'tictoc' , 'lda', 'topicmodels', 'LDAvis', 'tidyHeatmap', 'utf8','tm', 'readtext', 'data.table', 'textreadr', 'SnowballC', 'RColorBrewer', 'ggplot2', 'wordcloud', 'biclust', 'cluster', 'igraph', 'fpc', 'igraph', 'ggiraph', 'gapminder', 'visNetwork', 'networkD3', 'lubridate', 'anytime', 'quanteda', 'reshape2', 'jsonlite', 'sentimentr', 'textdata', 'rlist', 'viridisLite', 'viridis', 'topicmodels', 'readxl', 'googleVis', 'scales' , 'ganttrify', 'tibble', 'ggthemes', 'ggalluvial', 'clock', 'hrbrthemes', 'ggalluvial', 'patchwork')
+for (p in packages){
+ if(!require(p, character.only=T)) {
+ install.packages(p)
+ }
+ library(p, character.only = T)
+}
+```
+
+# Importing Data
+
+This code chunk uses read_csv in readr package.
+
+```{r}
+news <- "News Articles/"
+```
+
+```{r}
+read_folder <- function(infolder) {
+  tibble(file = dir(infolder, full.names= TRUE)) %>%
+  mutate(text = map(file, read_lines)) %>%
+  transmute(id = basename(file), text) %>%
+  unnest(text)
+}
+```
+
+```{r}
+raw_text <- tibble(folder = dir(news, full.names = TRUE)) %>%
+  mutate(folder_out = map(folder, read_folder)) %>%
+  unnest(cols = c(folder_out)) %>%
+  transmute(newsgroup = basename(folder), id, text)
+write_rds(raw_text, "rds/news.rds")
+```
+
+# Initial EDA
+```{r}
+raw_text %>% 
+  group_by(newsgroup) %>%
+  summarize(messages = n_distinct(id)) %>%
+  ggplot(aes(messages, newsgroup)) + 
+  geom_col(fill = "lightblue") + 
+  labs(y = NULL)
+```
+# Cleaning Text Data
+```{r}
+cleaned_text <- raw_text %>%
+  group_by(newsgroup, id) %>%
+  filter(cumsum(text =="") > 0, 
+         cumsum(str_detect(text, "^--")) == 0) %>%
+  ungroup()
+```
+
+```{r}
+cleaned_titles <- cleaned_text %>%
+  filter(str_detect(text, "TITLE\\:")
+  )
+```
+
+```{r}
+cleaned_text <- cleaned_text %>%
+                    filter(!str_detect(text, "PUBLISHED\\:")) %>%
+                    filter(!str_detect(text, "LOCATION\\:")) %>%
+                    filter(!str_detect(text, "SOURCE\\:")) %>%
+                    filter(!str_detect(text, "AUTHOR\\:")) %>%
+                    filter(!str_detect(text, "\\d+:")) %>%
+                    filter(!str_detect(text, "aandacht")) %>%
+                    filter(!str_detect(text, "TITLE\\:")) %>% 
+                    filter(!str_detect(text, "continue\\reading"))
+```
+
+
+#Text Data Processing
+```{r}
+usenet_words <- cleaned_text %>%
+  unnest_tokens(word, text) %>%
+  filter(str_detect(word, "[a-z']$"), !word %in% stop_words$word, !str_detect(word, "title")
+  )
+```
+
+```{r}
+usenet_words_all <- usenet_words %>% count(word, sort = TRUE) %>%
+  ungroup()
+```
+
+#Visualising words in wordcloud
+
+```{R}
+pal2 <- brewer.pal(8,"Dark2")
+wordcloud(usenet_words_all$word, usenet_words_all$n, min.freq = 3,
+          max.words=300, random.order=FALSE, rot.per=0.35, 
+          colors=brewer.pal(8, "Dark2"))
+```
+
+#Grouping words based on newsgroup
+
+```{r}
+words_by_newsgroup <- usenet_words %>%
+  count(newsgroup, word, sort = TRUE) %>%
+  ungroup()
+```
+
+#Word cloud at newsgroup level 
+
+```{r}
+set.seed(1234)
+
+words_by_newsgroup %>%
+  filter(n > 10) %>%
+  ggplot(aes(label = word, size = n)) + 
+  geom_text_wordcloud() +
+  theme_minimal() + 
+  facet_wrap(~newsgroup)
+```
+
+#tf_idf
+
+```{r}
+tf_idf <- words_by_newsgroup %>%
+  bind_tf_idf(word, newsgroup, n) %>%
+  arrange(desc(tf_idf))
+```
+
+#Data table at tf_idf level 
+
+```{r}
+DT::datatable(tf_idf, filter = 'top')  %>%
+  formatRound(columns = c('tf', 'idf', 'tf_idf'), 
+              digits = 3) %>%
+  formatStyle(0, target = 'row', lineHeight='25%')
+```
+
+#Top 12 words for each newsgroup with tf_idf
+
+```{r}
+tf_idf %>%
+  #filter(str_detect(newsgroup, "^sci\\.")) %>%
+  group_by(newsgroup) %>%
+  slice_max(tf_idf, n = 12) %>%
+  ungroup() %>%
+  mutate(word = reorder(word, tf_idf)) %>%
+  
+  ggplot(aes(tf_idf, word, fill = newsgroup)) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~ newsgroup, scales = "free") + 
+  labs(x = "tf-idf", y = NULL)
+```
+#filtering tf-idf for targeted key organizations
+
+```{r}
+tf_idf_filtered <-
+tf_idf %>%
+filter(word == "apa" | word == "pok" | word == "government" | word == "gastech")
+```
+
+#reviewing proportion of appearance of the key organizations in newsgroup
+
+```{r}
+ggplot(tf_idf_filtered,
+aes(y = fct_rev(word), x = tf_idf, fill = newsgroup)) +
+geom_col() +
+guides(fill = FALSE) +
+labs(x = "tf_idf", y = NULL) +
+facet_wrap(~ newsgroup) +
+theme_bw()
+
+```
+
+#doing a pairwise correlation
+
+```{r}
+newsgroup_cors <- words_by_newsgroup %>%
+  pairwise_cor(newsgroup, word, n, sort = TRUE)
+```
+
+#visualising the pairwise correlation at r =0.1
+
+```{r}
+set.seed(123)
+
+newsgroup_cors %>%
+  filter(correlation > .1) %>%
+  graph_from_data_frame() %>%
+  ggraph(layout = "nicely") +
+  geom_edge_link(aes(alpha = correlation, width = correlation), color="grey") +
+  #geom_node_point(size = 4, color = "lightblue") +
+  geom_node_text(aes(label = vapply(name, str_wrap, character(1), width = 10)), colour = "blue", size =4) +
+
+theme_void()
+```
+#visualising the pairwise correlation at r =0.7
+
+```{r}
+set.seed(123)
+
+newsgroup_cors %>%
+  filter(correlation > .7) %>%
+  graph_from_data_frame() %>%
+  ggraph(layout = "nicely") +
+  geom_edge_link(aes(alpha = correlation, width = correlation), color="grey") +
+  geom_node_point(size = 4, color = "lightblue") +
+  geom_node_text(aes(label = vapply(name, str_wrap, character(1), width = 10)), colour = "blue", size =4) +
+
+theme_void()
+```
+
+#creating bigrams
+
+```{r}
+bigrams <- cleaned_text %>% unnest_tokens(bigram,
+                                          text, 
+                                          token = "ngrams", 
+                                          n = 2)
+```
+
+```{r}
+bigrams_separated <- bigrams %>%
+  filter(bigram != 'NA') %>%
+  separate(bigram, c("word1", "word2"), sep = " ")
+
+bigrams_filtered <- bigrams_separated %>%
+  filter(!word1 %in% stop_words$word) %>%
+  filter(!word2 %in% stop_words$word) %>% 
+  filter(!word1 == "20") %>% filter(!word1 == "jan") %>% filter(!word1 == "2014") %>% filter(!word1 == "hrs")
+```
+
+```{r}
+bigram_counts <- bigrams_filtered %>%
+  count(word1, word2, sort = TRUE)
+```
+
+```{r}
+bigram_graph <- bigram_counts %>%
+  filter(n > 24) %>%
+  graph_from_data_frame()
+bigram_graph
+```
+#creating a visualization of word relationships in all news articles at word frequency > 24
+
+```{r}
+set.seed(1234)
+
+ggraph(bigram_graph, layout = "kk") + 
+  geom_edge_link(aes(start_cap = label_rect(node1.name), end_cap = label_rect(node2.name)), arrow = arrow(length = unit(2, 'mm'))) +
+  #geom_node_point(color = "lightyellow", size = 10) + 
+  geom_node_text(aes(label = name), size = 4) +
+  theme(panel.background = element_rect(fill = "lightsteelblue2")) 
+```
+# examining new article titles
+
+```{r}
+usenet_words_titles <- cleaned_titles %>%
+  unnest_tokens(word, text) %>%
+  filter(str_detect(word, "[a-z']$"), !word %in% stop_words$word, !str_detect(word, "title"),
+         #!str_detect(word, "am"), !str_detect(word, "pm"), !str_detect(word, "hrs"), 
+  )
+```
+
+```{r}
+usenet_words_titles_all <- usenet_words_titles %>% count(word, sort = TRUE) %>%
+  ungroup()
+```
+
+#Visualising words in wordcloud based on news titles
+
+```{R}
+pal2 <- brewer.pal(8,"Dark2")
+wordcloud(usenet_words_titles_all$word, usenet_words_titles_all$n, min.freq = 3,
+          max.words=150, random.order=FALSE, rot.per=0.35, 
+          colors=brewer.pal(8, "Dark2"))
+```
+
+
+
+```{r}
+bigrams <- cleaned_titles %>% unnest_tokens(bigram,
+                                          text, 
+                                          token = "ngrams", 
+                                          n = 2)
+```
+
+```{r}
+bigrams_separated <- bigrams %>%
+  filter(bigram != 'NA') %>%
+  separate(bigram, c("word1", "word2"), sep = " ")
+
+bigrams_filtered <- bigrams_separated %>%
+  filter(!word1 %in% stop_words$word) %>%
+  filter(!word2 %in% stop_words$word) %>%
+  filter(!word1 == "title") %>% #filter(!word1 == "location") %>%
+  filter(!word2 == "title") #%>% filter(!word2 == "location") %>%
+  #filter(!word1 == "tomorrow") %>% filter(!word1 == "morning") %>%
+  #filter(!word2 == "tomorrow") %>% filter(!word2 == "morning")
+```
+
+```{r}
+bigram_counts <- bigrams_filtered %>%
+  count(word1, word2, sort = TRUE)
+```
+
+```{r}
+bigram_graph <- bigram_counts %>%
+  filter(n > 3) %>%
+  graph_from_data_frame()
+bigram_graph
+```
+
+```{r}
+set.seed(456)
+
+
+ggraph(bigram_graph, layout = "kk") + 
+  geom_edge_link(aes(start_cap = label_rect(node1.name), end_cap = label_rect(node2.name)), arrow = arrow(length = unit(1, 'mm'))) +
+  geom_node_point(color = "lightyellow", size = 7) + 
+  geom_node_text(aes(label = name), size = 3.5) +
+  theme(panel.background = element_rect(fill = "lightsteelblue1"))
+```
+```{r}
+bigram_counts <- bigrams_filtered %>%
+  countword1, word2, sort = TRUE)
+```
+
+```{r}
+bigrams_joined <- bigram_counts  %>% 
+    tidyr::unite('bigram',c("word1", "word2"), sep=" ", remove = TRUE)
+```
+
+```{r}
+bigrams_joined <- bigrams_joined %>% filter(n>4)
+bigrams_joined <- arrange(bigrams_joined, n)
+bigrams_joined$bigram <- factor(bigrams_joined$bigram, levels = bigrams_joined$bigram)
+p <- ggplot(bigrams_joined, aes(bigram, n, fill = n)) + geom_col() + coord_flip() 
+
+p + theme(legend.position = "none")
+
+
+```
+```{r}
+cleaned_text.df <- as.data.frame(cleaned_text)
+
+parenthesis <- grepl('"*"', cleaned_text$text)
+
+print (parenthesis)
+
+parenthesis.df <- c(parenthesis)
+
+Articleparenthesis.df <- cleaned_text.df[(parenthesis.df),]
+
+#row.names=
+
+parenthesis.df <- as.data.frame(parenthesis, cleaned_text$id)
+
+has_rownames(parenthesis.df)
+
+
+parenthesis2.df <- rownames_to_column(parenthesis.df) 
+
+parenthesis2.df
+
+parenthesis2.df.tibble <- as_tibble(parenthesis2.df)
+
+parenthesis2.df.tibble
+
+DISTINCTparenthesis.df <- distinct(parenthesis2.df.tibble)
+
+
+PRIMARYARTICLES <- subset(DISTINCTparenthesis.df, parenthesis!=FALSE)
+
+SECONDARYARTICLES2 <- subset(DISTINCTparenthesis.df, parenthesis!=TRUE)
+
+PRIMARYARTICLES_FALSE <- anti_join(SECONDARYARTICLES2, PRIMARYARTICLES)#,by ='rowname')
+
+remove_n <- PRIMARYARTICLES$rowname
+
+datawithoutprimary <- PRIMARYARTICLES_FALSE[!(PRIMARYARTICLES_FALSE$rowname %in% remove_n),]
+
+datawithoutprimary
+PRIMARYARTICLES_DF <- as.data.frame(PRIMARYARTICLES)
+datawithoutprimary_DF <- as.data.frame(datawithoutprimary)
+PRIMARYANDSECONDARY_DF <- rbind(PRIMARYARTICLES_DF, datawithoutprimary_DF)
+PRIMARYANDSECONDARY_DF
+PRIMARYANDSECONDARY_DF_SPLIT <- PRIMARYANDSECONDARY_DF %>% 
+    tidyr::separate(rowname, c("News_Company", "Document"), sep="[-]")
+PRIMARYANDSECONDARY_DF_SPLIT
+PRIMARYANDSECONDARY_DF_SPLIT_COUNT <- PRIMARYANDSECONDARY_DF_SPLIT %>% group_by(News_Company, parenthesis) %>% summarise(n = n()) 
+PRIMARYANDSECONDARY_DF_SPLIT_COUNT
+```
+```{r}
+PRIMARYANDSECONDARY_DF_SPLIT_COUNT <- PRIMARYANDSECONDARY_DF_SPLIT_COUNT %>% mutate_at("parenthesis", str_replace, "FALSE", "Derivative") %>% mutate_at("parenthesis", str_replace, "TRUE", "Primary")
+
+
+PRIMARYANDSECONDARY_DF_SPLIT_COUNT <- rename(PRIMARYANDSECONDARY_DF_SPLIT_COUNT, "SourceType" = parenthesis)
+
+
+```
+
+```{r}
+p <- ggplot(PRIMARYANDSECONDARY_DF_SPLIT_COUNT , aes(x = SourceType, y = n, fill = SourceType, alpha = SourceType)) +
+  geom_col(position = position_dodge()) +
+  scale_alpha_manual(values = c(1, 20)) +
+  facet_wrap(vars(News_Company)) +
+  theme_bw()
+p + labs(title = "Number of News Articles by Source Type", y = "No of News Articles")
+```
+# codes to prepare for corporaexplorer
+
+```{R}
+
+# Pre-processing
+
+cleaned_text <- raw_text %>%
+  group_by(newsgroup, id) %>%
+  filter(cumsum(text =="") > 0, 
+         cumsum(str_detect(text, "^--")) == 0) %>%
+  ungroup()
+```
+
+```{r}
+
+cleaned_text$text <- str_replace_all(cleaned_text$text, "\\W" ," ")
+```
+
+```{r}
+
+cleaned_text <- cleaned_text[!cleaned_text$text=="",]
+cleaned_text <- cleaned_text[!cleaned_text$text==" ",]
+
+```
+
+```{r}
+#cleaned_text <- cleaned_text %>% 
+    #tidyr::unite('id',c("newsgroup", "id"), sep="-")
+```
+
+```{R}
+cleaned_text <- cleaned_text %>% dplyr::group_by(id) %>%
+  dplyr::summarise(Text = paste(text, collapse = " "), .groups = "drop_last") 
+```
+
+
+```{R}
+cleaned_text <- tidyr::unnest(cleaned_text, Text)
+```
+
+
+```{r}
+cleaned_text_v2 <- cleaned_text %>% 
+    tidyr::separate(id, c("id1", "id2", "id3"), sep="[-.]")
+```
+
+
+```{r}
+cleaned_text_v2 <- subset(cleaned_text_v2  , select = -c(id3))
+```
+
+
+```{r}
+names(cleaned_text_v2)[names(cleaned_text_v2) == "id2"] <- "ArticleNo"
+names(cleaned_text_v2)[names(cleaned_text_v2) == "id1"] <- "NewsGroup"
+```
+
+```{R}
+cleaned_text_v2$for_tab_title <- paste(cleaned_text_v2$NewsGroup, cleaned_text_v2$ArticleNo)
+corpus_revised <- prepare_data(cleaned_text_v2, date_based_corpus = FALSE, grouping_variable = "NewsGroup", within_group_identifier = "ArticleNo", columns_doc_info = colnames(cleaned_text_v2)[1:5], tile_length_range=c(2,2), use_matrix=FALSE)
+explore(corpus_revised)
+```
+
+
+# Creating visualizations specifically for news in 2014
+
+```{r}
+cleaned_text_v4 <- dplyr::filter(cleaned_text_v2, grepl('2014', Text))
+```
+
+
+```{r}
+cleaned_text_v4 <- cleaned_text_v4 %>%
+                    filter(!str_detect(Text, "PUBLISHED\\:")) %>%
+                    filter(!str_detect(Text, "LOCATION\\:")) %>%
+                    filter(!str_detect(Text, "SOURCE\\:")) %>%
+                    filter(!str_detect(Text, "AUTHOR\\:")) %>%
+                    filter(!str_detect(Text, "\\d+:")) %>%
+                    filter(!str_detect(Text, "aandacht")) %>%
+                    filter(!str_detect(Text, "TITLE\\:")) %>% 
+                    filter(!str_detect(Text, "continue\\reading"))
+```
+
+
+#Text Data Processing
+```{r}
+usenet_words_v4 <- cleaned_text_v4 %>%
+  unnest_tokens(word, Text) %>%
+  filter(str_detect(word, "[a-z']$"), !word %in% stop_words$word, !str_detect(word, "title"),!str_detect(word, "jan")
+         ,!str_detect(word, "published"), !str_detect(word, "update"),  !str_detect(word, "pm"),  !str_detect(word, "blog"),  !str_detect(word, "day"),  !str_detect(word, "morning")
+         #!str_detect(word, "am"), !str_detect(word, "pm"), !str_detect(word, "hrs"), 
+  )
+```
+
+
+
+#Perform a count of words
+
+```{r}
+words_v4 <- usenet_words_v4 %>%
+  count(word, sort = TRUE) %>%
+  ungroup()
+```
+
+
+#Visualising words in wordcloud
+
+```{R}
+
+pal2 <- brewer.pal(8,"Dark2")
+wordcloud(words_v4$word, words_v4$n, min.freq=5,
+max.words=150, random.order=FALSE, rot.per=.15, colors=pal2)
+```
+
+```{r}
+words_by_newsgroup_v5 <- usenet_words_v4 %>%
+  count(NewsGroup, word, sort = TRUE) %>%
+  ungroup()
+```
+
+
+```{r}
+tf_idf <- words_by_newsgroup_v5 %>%
+  bind_tf_idf(word, NewsGroup, n) %>%
+  arrange(desc(tf_idf))
+```
+
+```{r}
+tf_idf %>%
+  #filter(str_detect(newsgroup, "^sci\\.")) %>%
+  group_by(NewsGroup) %>%
+  slice_max(tf_idf, n = 8) %>%
+  ungroup() %>%
+  mutate(word = reorder(word, tf_idf)) %>%
+  
+  ggplot(aes(tf_idf, word, fill = NewsGroup)) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~ NewsGroup, scales = "free") + 
+  labs(x = "tf-idf", y = NULL)
+```
+
+
+
+
+
+# Initial EDA
+```{r}
+raw_text_lda <- raw_text
+raw_text_lda %>% 
+  group_by(newsgroup) %>%
+  summarize(messages = n_distinct(id)) %>%
+  ggplot(aes(messages, newsgroup)) + 
+  geom_col(fill = "lightblue") + 
+  labs(y = NULL)
+```
+
+```{R}
+cleaned_text_lda <- dplyr::filter(cleaned_text_v2 , grepl('2014', Text))
+cleaned_text_lda <- subset(cleaned_text_lda  , select = -c(for_tab_title))
+```
+
+
+#Text Data Processing
+```{r}
+usenet_words_lda <- cleaned_text_lda %>%
+  unnest_tokens(word, Text) %>%
+  filter(str_detect(word, "[a-z']$"), !word %in% stop_words$word, !str_detect(word, "title"), !str_detect(word, "caf"), !str_detect(word, "singapur"), !str_detect(word, "jr"), !str_detect(word, "singapore"),!str_detect(word, "threats"), !str_detect(word, "international's"), !str_detect(word, "jan"), !str_detect(word, "pm")
+         #!str_detect(word, "am"), !str_detect(word, "pm"), !str_detect(word, "hrs"), 
+  )
+```
+
+#do a word count
+```{r}
+words_by_newsgroup_lda <- usenet_words_lda %>%
+  count(NewsGroup, word, sort = TRUE) %>%
+  ungroup()
+```
+
+#perform tf_idf
+```{r}
+tf_idf <- words_by_newsgroup_lda %>%
+  bind_tf_idf(word, NewsGroup, n) %>%
+  arrange(desc(tf_idf))
+```
+
+#create document term matrix
+```{r}
+tf_dtm <- tf_idf %>% cast_dtm(document = NewsGroup, term = word, value = n)
+tf_dtm
+```
+
+#Perform a LDA on 4 topics
+```{R}
+lda4 <- LDA(tf_dtm, k = 4, control = list(seed = 123))
+lda4
+```
+```{R}
+perplexity(lda4)
+```
+
+```{r}
+word_topics <- tidy(lda4, matrix = "beta")
+word_topics
+```
+
+```{r}
+top_terms <- word_topics %>%
+  group_by(topic) %>%
+  slice_max(beta, n = 30) %>% 
+  ungroup() %>%
+  arrange(topic, -beta)
+
+top_terms
+```
+
+```{r}
+p1_topicterms <- top_terms %>%
+  mutate(term = reorder_within(term, beta, topic)) %>%
+  ggplot(aes(beta, term, fill = factor(topic))) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~ topic, scales = "free") +
+  scale_y_reordered()
+p1_topicterms 
+```
+```{r}
+newsgroup_gamma <- tidy(lda4, matrix = "gamma")
+newsgroup_gamma
+```
+#create LDAvis
+
+```{R}
+
+topicmodels_json_ldavis <- function(fitted, doc_term){
+    require(LDAvis)
+    require(slam)
+
+    # Find required quantities
+    phi <- as.matrix(posterior(fitted)$terms)
+    theta <- as.matrix(posterior(fitted)$topics)
+    vocab <- colnames(phi)
+    term_freq <- slam::col_sums(doc_term)
+
+    # Convert to json
+    json_lda <- LDAvis::createJSON(phi = phi, theta = theta,
+                            vocab = vocab,
+                            doc.length = as.vector(table(doc_term$i)),
+                            term.frequency = term_freq)
+
+    return(json_lda)
+}
+
+set.seed(1234)
+
+topic_res <- LDA(tf_dtm, 4)
+tf_12_json <- topicmodels_json_ldavis(
+  fitted = topic_res,
+  doc_term = tf_dtm
+)
+```
+
+```{r}
+serVis(tf_12_json)
+```
+
+#applying the newsgroups back to the topic distribution
+```{r}
+lda.model <- topicmodels::LDA(tf_dtm, 4, method = "Gibbs", control = list(iter=2000, seed = 1234))
+theta <- as.data.frame(topicmodels::posterior(lda.model)$topics)
+theta
+```
+#printing the top 30 terms for each topic
+```{r}
+lda.topics <- topicmodels::topics(lda.model, 1)
+lda.terms <- as.data.frame(topicmodels::terms(lda.model, 30), stringsAsFactors = FALSE)
+#lda.terms[1:4]
+lda.terms
+
+
+```
+
+```{R}
+theta_tidy <- 
+    theta %>% 
+    as_tibble(rownames="Newsgroup") 
+
+theta_tidy
+```
+
+```{r}
+
+theta_tidy <- theta_tidy %>% rename (Topic_1 = "1", Topic_2 = "2", Topic_3 = "3", Topic_4 = "4")
+
+
+```
+
+#pivot long
+```{R}
+theta_tidy <- theta_tidy %>%
+ tidyr::pivot_longer(
+     cols = starts_with("Topic"), 
+     names_to = "Topic_no", 
+     values_to = "result", 
+     names_prefix = "Topic_")
+```
+
+```{R}
+theta_tidy_heatmap <- 
+    theta_tidy %>%
+    heatmap(Newsgroup, Topic_no, result, 
+            rect_gp = grid::gpar(lwd = 0.5), col= colorRampPalette(brewer.pal(8, "Blues"))(25)) 
+```
+
+```{r}
+theta_tidy_heatmap
+```
+
+```{R}
+raw_text_utf8 <- raw_text_lda %>% mutate_if(is.character, utf8_encode)
+```
+
+```{r}
+DT::datatable(raw_text_utf8, filter = 'top') 
+```
+
+
+# create alternative alluvial diagram
+```{r}
+
+related_table <- tibble(
+  Suspects = c("Loreto Bodrogi", "Loreto Bodrogi", "Varro Awelon", "Hennie Osvaldo", "Isia Vann", "Isia Vann", "Minke Mies", "Minke Mies", "Varro Awelon", "Hennie Osvaldo", "Loreto Bodrogi"),
+  Org = c("Gastech", "Gastech", "Gastech", "Gastech", "Gastech", "POK", "Gastech", "POK", "APA", "POK", "APA"),
+  Connections = c("Carmin Bodrogi" , "Henk Bodrogi", "Cynthe Awelon", "Carmine Osvaldo", "Juliana Vann", "Juliana Vann", "Valentine Mies", "Valentine Mies", "Cynthe Awelon","Carmine Osvaldo", "Carmin Bodrogi"),
+  n = c( 1, 1, 1, 1,1, 1,1, 1,1, 1,1)
+)
+
+
+ggplot(related_table,
+       aes(axis1 = Suspects,
+           axis2 = Org,
+           axis3 = Connections
+           )) +
+  geom_alluvium(aes(fill = Suspects)) +
+  geom_stratum() +
+  geom_text(stat = "stratum", 
+            aes(label = after_stat(stratum))) +
+  scale_x_discrete(limits = c("Suspects", "Org", "Connections"),
+                   expand = c(.1, .1)) +
+  scale_fill_viridis_d() +
+  labs(title = "Relationships with APA, Gastech and POK",
+       subtitle = "stratified by Suspects, Org, and Connections"
+       ) +
+  theme_minimal() +
+  theme(legend.position = "none", axis.text.y = element_blank(),axis.ticks = element_blank() ) 
+```
+
+```{r}
+email_headers <- read_csv("email headers.csv")
+```
+
+# to get unique email titles without replies
+```{r}
+email_headers <- email_headers %>%
+  filter(!str_detect(Subject, "RE: "))
+```
+
+# remove all columns except subject so that we can categorise subject
+```{r}
+email_headers <- subset(email_headers , select = -c(From, To, Date))
+```
+
+# get unique email subject headers
+```{r}
+email_headers_count <- email_headers %>%
+        count(Subject, sort = TRUE)
+```
+
+# write to csv to perform manual labelling of 154 obs
+```{r}
+#write_csv(email_headers_count, "email_headers_count.csv", append = FALSE)
+```
+
+# read csv of manually labelled 154 obs
+```{r}
+email_headers_count <- read_csv("email_headers_count.csv")
+```
+
+#Use dyplr full join to join back with email_headers table with 315 obs
+```{r}
+email_headers <- email_headers %>% full_join(email_headers_count, by = "Subject")
+```
+
+#remove n column 
+```{r}
+email_headers <- subset(email_headers , select = -c(n))
+```
+
+```{r}
+email_headers_re <- email_headers %>%
+  mutate(str_c("RE: ", Subject)) 
+```
+
+```{r}
+email_headers_re <- subset(email_headers_re , select = -c(Subject))
+```
+
+```{r}
+colnames(email_headers_re)
+```
+
+```{r}
+names(email_headers_re)[names(email_headers_re) == "str_c(\"RE: \", Subject)"] <- "Subject"
+```
+
+#quick check of total non-duplicate data in original file to verify processing output, there are 1170 obs
+```{r}
+email_headers_nonduplicates <- read_csv("email headers.csv")
+email_headers_nonduplicates <- distinct(email_headers_nonduplicates, across())
+```
+
+#add the subject type column back to original email headers table
+```{r}
+email_headers_ori <- read_csv("email headers.csv")
+colnames(email_headers_ori)
+colnames(email_headers)
+email_headers_ori <- email_headers_ori %>% left_join(email_headers, by = "Subject")
+email_headers_ori <- distinct(email_headers_ori, across())
+```
+
+```{r}
+email_headers_ori_csv <- read_csv("email headers.csv")
+email_headers_ori_re <- dplyr::left_join(email_headers_ori_csv, email_headers_re)
+email_headers_ori_re <- email_headers_ori_re %>% distinct()
+```
+```{r}
+email_headers_ori_re <- dplyr::left_join(email_headers_ori_re, email_headers, by = "Subject")
+```
+
+```{r}
+email_headers_ori_re <- email_headers_ori_re %>% unite('Subject_Type', `Subject type.x`:`Subject type.y`, remove = TRUE)
+```
+
+```{r}
+email_headers_ori_re_NA <- filter(email_headers_ori_re, Subject_Type == "NA_NA")
+```
+
+#confirmed that they are all non-work matters
+
+```{r}
+email_headers_ori_re <- email_headers_ori_re  %>% mutate_at("Subject_Type", str_replace, "NA_NA", "Non-work related") 
+```
+```{R}
+email_headers_ori_re <- email_headers_ori_re  %>% mutate_at("Subject_Type", str_replace, "NA_", "") %>% mutate_at("Subject_Type", str_replace, "_NA", "") 
+```
+
+```{R}
+email_headers_ori_re <- email_headers_ori_re %>% distinct()
+```
+
+```{r}
+#wrangling date - using the 'anytime' package released in 2020
+email_headers_ori_re$SentDate <- anytime(email_headers_ori_re$Date)
+email_headers_ori_re$SentDate <- iso8601(anydate(email_headers_ori_re$SentDate))
+email_headers_ori_re$Weekday = wday(email_headers_ori_re$SentDate)
+```
+
+#Assuming that general office hours are between 7am - 6:59pm. We note that drivers might be on shift but generally, it may be unusual to be sending emails outside regular office hours and we may want to look into that
+```{r}
+#wrangling time - using the 'anytime' package released in 2020
+email_headers_ori_re$SentTime <- anytime(email_headers_ori_re$Date)
+email_headers_ori_re$SentHour <- hour(email_headers_ori_re$SentTime)
+email_headers_ori_re <- email_headers_ori_re  %>% mutate_at("SentHour", str_replace_all, c("19" = "Outside_work_hours", "20" = "Outside_work_hours", "21" = "Outside_work_hours", "22" = "Outside_work_hours", "18" = "During_work_hours", "17" = "During_work_hours", "16" = "During_work_hours","15" = "During_work_hours", "14" = "During_work_hours", "13" = "During_work_hours", "12" = "During_work_hours", "11" = "During_work_hours", "10" = "During_work_hours", "9" = "During_work_hours", "8" = "During_work_hours", "7" = "During_work_hours", "6" = "Outside_work_hours", "5" = "Outside_work_hours", "4" = "Outside_work_hours", "3" = "Outside_work_hours", "2" = "Outside_work_hours", "1" = "Outside_work_hours", "0" = "Outside_work_hours"))
+email_headers_ori_re <- email_headers_ori_re  %>% mutate_at("Weekday", str_replace_all, c("7" = "Sunday", "6" = "Saturday", "5" = "Friday", "4" = "Thursday", "3" = "Wednesday", "2" = "Tuesday", "1" = "Monday"))
+```
+
+#processed email headers after splitting recipient is equivalent to 8974 obs.
+```{r}
+split_to_email_headers <- separate_rows(email_headers_ori_re, To, sep = ",")
+processed_email_headers <- split_to_email_headers %>% 
+    tidyr::separate(From, c("Sender_First", "Sender_LastName")) %>%
+    tidyr::unite('Sender_fullname',c("Sender_First", "Sender_LastName"), sep=" ") %>%
+    tidyr::separate(To, c("Recipient_First", "Recipient_LastName"), sep="[,.@]") %>%
+    tidyr::unite('Recipient_fullname',c("Recipient_First", "Recipient_LastName"), sep=" ")
+```
+
+#adjust for words in names for 4 employees with "-", >1 word etc. 
+```{R}
+processed_email_headers <- processed_email_headers %>% mutate_at("Sender_fullname", str_replace, "Campo", "Campo-Corrente") %>% mutate_at("Sender_fullname", str_replace, "Sanjorge", "Sanjorge Jr.") %>% mutate_at("Sender_fullname", str_replace, "Vasco", "Vasco-Pais") %>% mutate_at("Sender_fullname", str_replace, "Ruscella Mies", "Ruscella Mies Haber") %>% mutate_at("Recipient_fullname", str_replace, "Ruscella Mies", "Ruscella Mies Haber") %>% mutate_at("Recipient_fullname", str_replace, "Jr", "Jr.") 
+```
+  
+#remove leading white space 
+```{r}
+processed_email_headers$Recipient_fullname <-  trimws(processed_email_headers$Recipient_fullname, "l")
+```
+  
+#filter out cases where sender sends to him/herself (likely in cc), reduces to 8170 obs
+```{r}
+processed_email_headers <- processed_email_headers[processed_email_headers$Sender_fullname!=processed_email_headers$Recipient_fullname,]
+```
+
+# changing a misclassification of email types
+```{r}
+processed_email_headers <- processed_email_headers %>% 
+    tidyr::unite('Merged',c("Subject", "Subject_Type"), sep="_")
+```
+
+```{r}
+processed_email_headers <- processed_email_headers  %>% mutate_at("Merged", str_replace, "Upcoming birthdays_Non-work related", "Upcoming birthdays_Work related") %>% mutate_at("Merged", str_replace, "RE: Upcoming birthdays_Non-work related", "RE: Upcoming birthdays_Work related") %>% mutate_at("Merged", str_replace, "FW: ARISE - Inspiration for Defenders of Kronos_Work related", "FW: ARISE - Inspiration for Defenders of Kronos_Non-work related") %>% mutate_at("Merged", str_replace, "RE: FW: ARISE - Inspiration for Defenders of Kronos_Work related", "RE: FW: ARISE - Inspiration for Defenders of Kronos_Non-work related")
+```
+
+```{r}
+processed_email_headers <- processed_email_headers %>% 
+    tidyr::separate(Merged, c("Subject", "Subject_Type"), sep="_", remove = TRUE)
+```
+
+# changing a misclassification of Sent period
+```{r}
+processed_email_headers <- processed_email_headers %>% 
+    tidyr::unite('Merged',c("Weekday", "SentHour"), sep="-")
+```
+
+```{r}
+processed_email_headers <- processed_email_headers  %>% mutate_at("Merged", str_replace, "Sunday-During_work_hours", "Sunday-Outside_work_hours") 
+```
+
+```{r}
+processed_email_headers <- processed_email_headers %>% 
+    tidyr::separate(Merged, c("Weekday", "SentHour"), sep="-", remove = TRUE)
+```
+
+
+```{r}
+sources <- processed_email_headers %>%
+  distinct(Sender_fullname) %>%
+  rename(label = Sender_fullname)
+
+destinations <- processed_email_headers %>%
+  distinct(Recipient_fullname) %>%
+  rename(label = Recipient_fullname)
+```
+
+
+```{R}
+employee_records <- read_excel("EmployeeRecords.xlsx", sheet = "Employee Records")
+employee_records  <- subset(employee_records  , select = -c(BirthDate, BirthCountry, Gender, CitizenshipBasis, CitizenshipStartDate, PassportCountry, PassportIssueDate, PassportExpirationDate, CurrentEmploymentStartDate, EmailAddress, MilitaryDischargeDate ))
+```
+
+#processed employee records to combine first and last name to full name.
+```{r}
+employee_records <- employee_records %>% 
+    tidyr::unite('Employee_Name',c("FirstName", "LastName"), sep=" ", remove = TRUE)
+```
+
+```{r}
+names(employee_records)[names(employee_records) == "CurrentEmploymentType"] <- "Department"
+```
+
+# there are 54 senders
+```{r}
+nodes <- full_join(sources, destinations, by = "label")
+nodes
+
+```
+
+```{r}
+nodes <- nodes %>% rowid_to_column("id")
+nodes
+```
+
+```{r}
+nodes <- nodes %>% left_join(employee_records, by = c("label"="Employee_Name"))
+nodes <- distinct(nodes, across())
+nodes
+```
+
+
+```{r}
+per_route <- processed_email_headers %>%  
+  filter(Subject_Type == "Non-work related") %>%
+  group_by(Sender_fullname, Recipient_fullname, Weekday) %>%
+  summarise(weight = n()) %>% 
+  filter(weight > 0) %>%
+  ungroup()
+per_route
+```
+
+```{r}
+per_route_v2 <- 
+ dplyr::filter(processed_email_headers , grepl("ARISE", Subject)) %>%
+               #grepl("Vacation", Subject) & grepl("scheduling", Subject) ) %>%
+
+           # processed_email_headers %>% filter(Subject == "RE: FW: ARISE - Inspiration for Defenders of Kronos" | Subject == "FW: ARISE - #Inspiration for Defenders of Kronos" ) %>%
+  
+  group_by(Sender_fullname, Recipient_fullname, Weekday) %>%
+  summarise(weight = n()) %>% 
+  filter(weight > 0) %>%
+  ungroup()
+per_route_v2
+```
+
+
+```{r}
+edges_v2 <- per_route_v2 %>% 
+  left_join(nodes, by = c("Sender_fullname" = "label")) %>% 
+  rename(from = id)
+
+edges_v2 <- edges_v2 %>% 
+  left_join(nodes, by = c("Recipient_fullname" = "label")) %>% 
+  rename(to = id)
+
+edges_v2
+```
+
+
+```{r}
+edges <- per_route %>% 
+  left_join(nodes, by = c("Sender_fullname" = "label")) %>% 
+  rename(from = id)
+
+edges <- edges %>% 
+  left_join(nodes, by = c("Recipient_fullname" = "label")) %>% 
+  rename(to = id)
+
+edges
+```
+```{r}
+GAStech_graph <- tbl_graph(nodes = nodes, edges = edges, directed = TRUE)
+GAStech_graph
+```
+
+```{r}
+GAStech_graph_v2 <- tbl_graph(nodes = nodes, edges = edges_v2, directed = TRUE)
+GAStech_graph_v2
+```
+
+```{r}
+GAStech_graph_v2 %>%
+  activate(edges) %>%
+  arrange(desc(weight))
+```
+
+```{r}
+nodes_dep_2 <- nodes %>%
+  rename(group = Department)
+```
+
+```{r}
+visNetwork(nodes_dep_2, edges_v2, height = "500px", width = "100%") %>%
+  visEdges(arrows ="to") %>% 
+  visIgraphLayout(layout = "layout_with_fr") %>%
+  visOptions(highlightNearest = TRUE, nodesIdSelection = TRUE, manipulation = TRUE) %>%
+  visLegend() %>%
+  visLayout(randomSeed = 321)
+```
+
+
+```{r}
+GAStech_graph %>%
+  activate(edges) %>%
+  arrange(desc(weight))
+```
+
+# Creating facet graphs for non-work related emails on a weekday
+
+```{r}
+set.seed(123)
+set_graph_style()
+g <- ggraph(GAStech_graph, layout = "nicely") + geom_edge_link(aes(width=weight), alpha=0.2) + scale_edge_width(range = c(0.1,5)) + geom_node_point(aes(color = CitizenshipCountry), size = 2)
+g + facet_edges(~Weekday)
+```  
+```{r}
+set.seed(123)
+set_graph_style()
+g <- ggraph(GAStech_graph, layout = "fr") + geom_edge_link(aes(width=weight), alpha=0.2) + scale_edge_width(range = c(0.1,5)) + geom_node_point(aes(color = Department), size = 3) + theme(text=element_text(family="Arial", size=16)) +  geom_node_text(aes(label = id)) 
+g + facet_edges(~Weekday)  + 
+  theme(legend.position = "bottom") + ggtitle("Non-work related emails exchanged")
+```  
+```{r}
+set_graph_style()
+g <- ggraph(GAStech_graph, layout = "fr") + geom_edge_link(aes(width=weight), alpha=0.2) + scale_edge_width(range = c(0.1,5)) + geom_node_point(aes(color = MilitaryServiceBranch), size = 2)
+g + facet_nodes(~Department)
+``` 
+
+```{r}
+set_graph_style()
+g <- ggraph(GAStech_graph, layout = "nicely") + geom_edge_link(aes(width=weight), alpha=0.5) + scale_edge_width(range = c(0.1,5)) + geom_node_point(aes(color = CitizenshipCountry), size = 3)
+g + facet_nodes(~Department) + 
+  theme(legend.position = "bottom") 
+```
+
+# Facet_nodes
+```{r}
+set.seed(123)
+set_graph_style()
+g <- ggraph(GAStech_graph, layout = "nicely") + geom_edge_link(aes(width=weight), alpha=0.2) + scale_edge_width(range = c(0.1,5)) + geom_node_point(aes(color = Department), size = 2) 
+g + facet_nodes(~Department) + 
+  th_foreground(foreground = "lightsteelblue1", border = TRUE) + 
+  theme(legend.position = "bottom")  + ggtitle("Non-work related emails exchanged")
+```
+
+```{r}
+set_graph_style()
+g <- ggraph(GAStech_graph, layout = "nicely") + geom_edge_link(aes(width=weight), alpha=0.4) + scale_edge_width(range = c(0.1,5)) + geom_node_point(aes(color = Department), size = 3) 
+g + facet_nodes(~MilitaryServiceBranch) + 
+  th_foreground(foreground = "grey80", border = TRUE) + 
+  theme(legend.position = "bottom")
+```
+
+
+```{r}
+nodes_dep <- nodes %>%
+  rename(group = Department)
+```
+
+```{r}
+visNetwork(nodes_dep, edges) %>%
+  visIgraphLayout(layout = "layout_with_fr") %>%
+  visOptions(highlightNearest = TRUE, nodesIdSelection = TRUE) %>%
+  visLegend() %>%
+  visLayout(randomSeed = 123)
+```
+
+```{r}
+per_route <- processed_email_headers %>%  
+  filter(Subject_Type == "Non-work related") %>%
+  #filter(SentHour == "Outside_work_hours") %>%
+  group_by(Sender_fullname, Recipient_fullname) %>%
+  summarise(weight = n()) %>%
+  filter(weight > 1) %>%
+  ungroup()
+per_route
+```
+
+```{r}
+edges <- per_route %>% 
+  left_join(nodes, by = c("Sender_fullname" = "label")) %>% 
+  rename(from = id)
+
+edges <- edges %>% 
+  left_join(nodes, by = c("Recipient_fullname" = "label")) %>% 
+  rename(to = id)
+
+edges
+```
+
+```{r}
+GAStech_graph <- tbl_graph(nodes = nodes, edges = edges, directed = TRUE)
+GAStech_graph
+```
+
+```{r}
+GAStech_graph %>%
+  activate(edges) %>%
+  arrange(desc(weight))
+```
+
+```{r}
+#set_graph_style()
+set.seed(123)
+a <- grid::arrow(type = "closed", length = unit(.15, "inches"))
+g <- ggraph(GAStech_graph, layout = "kk") + geom_edge_link(aes(width=weight), alpha=0.2, arrow = a) + scale_edge_width(range = c(0.1,5)) + geom_node_point(aes(color = Department), size = 4) + #geom_node_text(aes(x = x*1.005, y=y*1.005, 
+                     #angle = -((-node_angle(x, y)+90)%%180)+90, label = label), 
+                 #size=3, hjust='outward')
+  geom_node_text(aes(label = label), nudge_x = 0.05, nudge_y = 0.05, vjust = -0.5, size = 2)
+g + 
+  theme(legend.position = "bottom")
+```
+
+```{r}
+set_graph_style()
+a <- grid::arrow(type = "closed", length = unit(.15, "inches"))
+g <- ggraph(GAStech_graph, layout = "nicely") + geom_edge_link(aes(edge_alpha = n), show.legend = FALSE, arrow = a, end_cap = circle(.07, 'inches')) + scale_edge_width(range = c(0.1,5)) + geom_node_point(aes(color = Department), size = 2) 
+g  + 
+  theme(legend.position = "bottom")
+```
+
+```{r}
+nodes_dep <- nodes %>%
+  rename(group = Department)
+```
+
+
+```{r}
+visNetwork(nodes_dep, edges) %>%
+  visEdges(arrows ="to") %>% 
+  visIgraphLayout(layout = "layout_with_fr") %>%
+  visOptions(highlightNearest = TRUE, nodesIdSelection = TRUE, manipulation = TRUE) %>%
+  visLegend() %>%
+  visLayout(randomSeed = 123)
+```
+
+```{r}
+DT::datatable(nodes, filter = 'top') %>%
+   formatStyle(0, target = 'row', lineHeight='75%')
+```
+
+# A connection data frame is a list of flows with intensity for each flow
+
+```{R}
+
+
+links <- data.frame(
+  source=c("group_A","group_A", "group_B", "group_C", "group_C", "group_E"), 
+  target=c("group_C","group_D", "group_E", "group_F", "group_G", "group_H"), 
+  value=c(2,3, 2, 3, 1, 3)
+  )
+
+per_route <- data.frame(source = c(per_route$Sender_fullname), target= c(per_route$Recipient_fullname), value=c(per_route$weight))
+ 
+# From these flows we need to create a node data frame: it lists every entities involved in the flow
+nodes <- data.frame(
+  name=c(as.character(per_route$source), 
+  as.character(per_route$target)) %>% unique()
+)
+ 
+# With networkD3, connection must be provided using id, not using real name like in the links dataframe.. So we need to reformat it.
+per_route$IDsource <- match(per_route$source, nodes$name)-1 
+per_route$IDtarget <- match(per_route$target, nodes$name)-1
+ 
+# Make the Network
+p <- sankeyNetwork(Links = per_route, Nodes = nodes,
+              Source = "IDsource", Target = "IDtarget",
+              Value = "value", NodeID = "name", 
+              sinksRight=FALSE)
+p
+```
+
+```{R}
+# A connection data frame is a list of flows with intensity for each flow
+links <- data.frame(
+  source=c("group_A","group_A", "group_B", "group_C", "group_C", "group_E"), 
+  target=c("group_C","group_D", "group_E", "group_F", "group_G", "group_H"), 
+  value=c(2,3, 2, 3, 1, 3)
+  )
+ 
+# From these flows we need to create a node data frame: it lists every entities involved in the flow
+nodes <- data.frame(
+  name=c(as.character(links$source), 
+  as.character(links$target)) %>% unique()
+)
+ 
+# With networkD3, connection must be provided using id, not using real name like in the links dataframe.. So we need to reformat it.
+links$IDsource <- match(links$source, nodes$name)-1 
+links$IDtarget <- match(links$target, nodes$name)-1
+ 
+# Make the Network
+p <- sankeyNetwork(Links = links, Nodes = nodes,
+              Source = "IDsource", Target = "IDtarget",
+              Value = "value", NodeID = "name", 
+              sinksRight=FALSE)
+p
+```
+
+
+```{R}
+employee_records <- read_excel("EmployeeRecords.xlsx", sheet = "Employee Records")
+employee_records  <- employee_records %>% filter(!str_detect(MilitaryDischargeType, " "))
+employee_records <- subset(employee_records , select = -c(EmailAddress))
+glimpse(employee_records)
+```
+
+```{r}
+employee_records <- employee_records %>% 
+    tidyr::unite('Fullname',c("FirstName", "LastName"), sep=" ")
+glimpse(employee_records)
+```
+```{r}
+employee_records$BirthDate <-  ymd(employee_records$BirthDate)
+glimpse(employee_records)
+```
+```{r}
+employee_records$MilitaryDischargeDate <-  ymd(employee_records$MilitaryDischargeDate)
+```
+
+```{r}
+employee_records_Kronos <- employee_records %>% filter(CitizenshipCountry == "Kronos")
+
+glimpse(employee_records_Kronos) 
+```
+```{r}
+employee_records_Kronos$MilitaryStartDate <- employee_records_Kronos$BirthDate %m+% years(18) 
+glimpse(employee_records_Kronos) 
+```
+
+```{R}
+employee_records_Kronos <- employee_records_Kronos %>% 
+    tidyr::unite('Branch_and_Discharge',c("MilitaryServiceBranch", "MilitaryDischargeType"), sep=" - ")
+glimpse(employee_records_Kronos) 
+```
+
+
+#Add a Column to a Dataframe Based on Other Column with dplyr - flagging employees with the suspicious ARISE email
+```{r}
+employee_records_Kronos <- employee_records_Kronos %>%
+  mutate(Status = case_when(
+    str_detect(Fullname, "Rachel Pantanal") ~ "Flagged",
+    str_detect(Fullname, "Ruscella Mies Haber") ~ "Flagged",
+    str_detect(Fullname, "Hennie Osvaldo") ~ "Flagged",
+    str_detect(Fullname, "Isia Vann") ~ "Flagged",
+    str_detect(Fullname, "Loreto Bodrogi") ~ "Flagged",
+    str_detect(Fullname, "Inga Ferro") ~ "Flagged",
+    str_detect(Fullname, "Minke Mies") ~ "Flagged",
+    TRUE ~ "Not flagged"
+    ))
+```
+
+```{r}
+employee_records_Kronos <- subset(employee_records_Kronos , select = -c(BirthDate, BirthCountry, Gender, CitizenshipCountry, CitizenshipBasis, CitizenshipStartDate, PassportCountry, PassportIssueDate, PassportExpirationDate, CurrentEmploymentType, CurrentEmploymentTitle,CurrentEmploymentStartDate ))
+
+#filter is added to improve focus on employees who are flagged
+employee_records_Kronos <- employee_records_Kronos #%>% filter(Status == "Flagged")
+employee_records_Kronos <- subset(employee_records_Kronos,  select = -c(Status))
+employee_records_Kronos
+
+```
+
+```{R}
+employee_records_Kronos.long <- employee_records_Kronos %>%
+  mutate(Start = ymd(MilitaryStartDate),
+         End = ymd(MilitaryDischargeDate)) %>%
+  gather(date.type, employee_records_Kronos.date, -c(Branch_and_Discharge, Fullname)) %>%
+  arrange(date.type, employee_records_Kronos.date) %>%
+  mutate(Fullname = factor(Fullname, levels=rev(unique(Fullname)), ordered=TRUE))
+```
+
+
+```{R}
+theme_update(plot.title = element_text(hjust = 0.5))
+theme_gantt <- function(base_size=11, base_family="Source Sans Pro Light") {
+  ret <- theme_bw(base_size, base_family) %+replace%
+    theme(panel.background = element_rect(fill="#ffffff", colour=NA),
+          axis.title.x=element_text(vjust=-0.2), axis.title.y=element_text(vjust=1.5),
+          title=element_text(vjust=1.2, family="Source Sans Pro Semibold"),
+          panel.border = element_blank(), axis.line=element_blank(),
+          panel.grid.minor=element_blank(),
+          panel.grid.major.y = element_blank(),
+          panel.grid.major.x = element_line(size=0.5, colour="grey80"),
+          axis.ticks=element_blank(),
+          legend.position="bottom", 
+          axis.title=element_text(size=rel(0.8), family="Source Sans Pro Semibold"),
+          strip.text=element_text(size=rel(1), family="Source Sans Pro Semibold"),
+          strip.background=element_rect(fill="#ffffff", colour=NA),
+          panel.spacing.y=unit(1.5, "lines"),
+          legend.key = element_blank())
+  
+  ret
+}
+
+# Calculate where to put the dotted lines that show up every three entries
+x.breaks <- seq(length(employee_records_Kronos$Fullname) + 0.5 - 3, 0, by=-3)
+
+# Build plot
+timeline_Kronosmilitary <- ggplot(employee_records_Kronos.long, aes(x=Fullname, y=employee_records_Kronos.date, colour=Branch_and_Discharge)) + 
+  geom_line(size=6) + 
+  geom_vline(xintercept=x.breaks, colour="grey80", linetype="dotted") + 
+  guides(colour=guide_legend(title=NULL)) +
+  labs(x=NULL, y=NULL) + coord_flip() +
+  #scale_y_date(date_breaks="2 years") +
+  scale_y_date(date_breaks="2 years", date_labels = ("%Y")) +
+  #theme_gantt()
+theme_economist() + scale_colour_economist() + theme(axis.text.x=element_text(angle=0, vjust = 1, size = 12, face = 'bold'), axis.text.y = element_text(size = 12, face = 'bold'), legend.text = element_text(size=12)) + ggtitle("Military Service Dates") + theme(plot.title = 
+element_text(hjust = 0.5, size = 18, color = "darkblue"))
+timeline_Kronosmilitary
+
+```
+#Create a dataframe to update POK-related member status
+```{R}
+Fullname <- c('Minke Mies', 'Hennie Osvaldo', 'Isia Vann', 'Loreto Bodrogi')
+spot_type <- c('F', 'F', 'P', 'F')
+spot_date <- c(1,1,1,1)
+pok_related_KronosMilitary <- data.frame(Fullname, spot_type, spot_date)
+pok_related_KronosMilitary <- as_tibble(pok_related_KronosMilitary)
+```
+
+```{r}
+employee_records_Kronos_tibble <- as_tibble(employee_records_Kronos)
+```
+
+```{r}
+employee_records_Kronos_tibble <- employee_records_Kronos_tibble %>% rename (wp= Fullname, activity = Branch_and_Discharge, start_date = MilitaryStartDate, end_date = MilitaryDischargeDate)
+employee_records_Kronos_tibble
+```
+
+```{R}
+      ganttrify(project = employee_records_Kronos_tibble,
+          project_start_date = "1984-10",
+          font_family = "Roboto Condensed")
+```
+
+#to install ganttrify <-  remotes::install_github("giocomai/ganttrify")
+```{R}
+
+ganttrify(project = ganttrify::employee_records_Kronos,
+          project_start_date = "1984",
+          font_family = "Roboto Condensed")
+```
+
+
+#Repeating for GAStech employees from the Tethan Military 
+
+```{r}
+employee_records_Tethyn <- employee_records %>% filter(CitizenshipCountry == "Tethys")
+
+glimpse(employee_records_Tethyn) 
+```
+
+#Since their service is only 1 year, we deduct 1 year from military discharge date to get military start date
+```{r}
+employee_records_Tethyn$MilitaryStartDate <- employee_records_Tethyn$MilitaryDischargeDate %m-% years(1) 
+glimpse(employee_records_Tethyn) 
+```
+
+```{R}
+employee_records_Tethyn <- employee_records_Tethyn %>% 
+    tidyr::unite('Branch_and_Discharge',c("MilitaryServiceBranch", "MilitaryDischargeType"), sep=" - ")
+glimpse(employee_records_Tethyn) 
+```
+
+```{r}
+employee_records_Tethyn <- subset(employee_records_Tethyn , select = -c(BirthDate, BirthCountry, Gender, CitizenshipCountry, CitizenshipBasis, CitizenshipStartDate, PassportCountry, PassportIssueDate, PassportExpirationDate, CurrentEmploymentType, CurrentEmploymentTitle,CurrentEmploymentStartDate ))
+```
+
+```{R}
+employee_records_Tethyn.long <- employee_records_Tethyn %>%
+  mutate(Start = ymd(MilitaryStartDate),
+         End = ymd(MilitaryDischargeDate)) %>%
+  gather(date.type, employee_records_Tethyn.date, -c(Branch_and_Discharge, Fullname)) %>%
+  arrange(date.type, employee_records_Tethyn.date) %>%
+  mutate(Fullname = factor(Fullname, levels=rev(unique(Fullname)), ordered=TRUE))
+```
+
+```{R}
+# Custom theme for making a clean Gantt chart
+theme_update(plot.title = element_text(hjust = 0.5))
+theme_gantt <- function(base_size=11, base_family="Source Sans Pro Light") {
+  ret <- theme_bw(base_size, base_family) %+replace%
+    theme(panel.background = element_rect(fill="#ffffff", colour=NA),
+          axis.title.x=element_text(vjust=-0.2), axis.title.y=element_text(vjust=1.5),
+          title=element_text(vjust=1.2, family="Source Sans Pro Semibold"),
+          panel.border = element_blank(), axis.line=element_blank(),
+          panel.grid.minor=element_blank(),
+          panel.grid.major.y = element_blank(),
+          panel.grid.major.x = element_line(size=0.5, colour="grey80"),
+          axis.ticks=element_blank(),
+          legend.position="bottom", 
+          axis.title=element_text(size=rel(0.8), family="Source Sans Pro Semibold"),
+          strip.text=element_text(size=rel(1), family="Source Sans Pro Semibold"),
+          strip.background=element_rect(fill="#ffffff", colour=NA),
+          panel.spacing.y=unit(1.5, "lines"),
+          legend.key = element_blank())
+  
+  ret
+}
+
+# Calculate where to put the dotted lines that show up every three entries
+x.breaks <- seq(length(employee_records_Tethyn$Fullname) + 0.5 - 3, 0, by=-3)
+
+# Build plot
+timeline <- ggplot(employee_records_Tethyn.long, aes(x=Fullname, y=employee_records_Tethyn.date, colour=Branch_and_Discharge)) + 
+  geom_line(size=6) + 
+  geom_vline(xintercept=x.breaks, colour="grey80", linetype="dotted") + 
+  guides(colour=guide_legend(title=NULL)) +
+  labs(x=NULL, y=NULL) + coord_flip() +
+  #scale_y_date(date_breaks="2 years") +
+  scale_y_date(date_breaks="1 year", date_labels = ("%Y")) +
+  #theme_gantt()
+theme_wsj() + theme(axis.text.x=element_text(angle=0, vjust = 1, size = 10, face = 'bold'), axis.text.y = element_text(size = 10, face = 'bold'), legend.text = element_text(size=12)) + ggtitle("Military Service Dates in Armed Forces of Tethyn for GAStech employees") + theme(plot.title = 
+element_text(hjust = 0.5, size = 18, color = "darkblue"))
+timeline + scale_colour_discrete(labels = function(x) str_wrap(x, width = 10)) 
+```
+
+
+
+
+
+#Repeating to create gantt chart for employee's employment start date 
+
+```{r}
+employee_records <- read_excel("EmployeeRecords.xlsx", sheet = "Employee Records")
+employee_records_startdate <- employee_records
+
+glimpse(employee_records_startdate) 
+```
+
+#Add a Column to a Dataframe Based on Other Column with dplyr - flagging employees with the suspicious ARISE email
+```{r}
+employee_records_startdate <- employee_records %>% 
+    tidyr::unite('Fullname',c("FirstName", "LastName"), sep=" ")
+employee_records_startdate <- employee_records_startdate %>%
+  mutate(Status = case_when(
+    str_detect(Fullname, "Rachel Pantanal") ~ "Flagged",
+    str_detect(Fullname, "Ruscella Mies Haber") ~ "Flagged",
+    str_detect(Fullname, "Hennie Osvaldo") ~ "Flagged",
+    str_detect(Fullname, "Isia Vann") ~ "Flagged",
+    str_detect(Fullname, "Loreto Bodrogi") ~ "Flagged",
+    str_detect(Fullname, "Inga Ferro") ~ "Flagged",
+    str_detect(Fullname, "Minke Mies") ~ "Flagged",
+    TRUE ~ "Not flagged"
+    ))
+```
+
+
+```{r}
+employee_records_startdate <- subset(employee_records_startdate , select = -c(BirthDate, BirthCountry, Gender, CitizenshipCountry, CitizenshipBasis, CitizenshipStartDate, PassportCountry, PassportIssueDate, PassportExpirationDate, CurrentEmploymentType, CurrentEmploymentTitle, EmailAddress, MilitaryDischargeDate, MilitaryDischargeType, MilitaryServiceBranch))
+
+employee_records_startdate$KidnappingStartDate <- ymd('2014-01-20')
+employee_records_startdate$CurrentEmploymentStartDate <- ymd(employee_records_startdate$CurrentEmploymentStartDate)
+
+#filter is added to improve focus on employees who are flagged
+employee_records_startdate <- employee_records_startdate #%>% filter(Status == "Flagged")
+employee_records_startdate 
+```
+
+```{R}
+employee_records_startdate.long <- employee_records_startdate %>%
+  mutate(Start = ymd(CurrentEmploymentStartDate),
+         End = ymd(KidnappingStartDate)) %>%
+  gather(date.type, employee_records_startdate.date, -c(Status, Fullname)) %>%
+  arrange(date.type, employee_records_startdate.date) %>%
+  mutate(Fullname = factor(Fullname, levels=rev(unique(Fullname)), ordered=TRUE))
+```
+
+```{R}
+# Custom theme for making a clean Gantt chart
+theme_update(plot.title = element_text(hjust = 0.5))
+theme_gantt <- function(base_size=11, base_family="Source Sans Pro Light") {
+  ret <- theme_bw(base_size, base_family) %+replace%
+    theme(panel.background = element_rect(fill="#ffffff", colour=NA),
+          axis.title.x=element_text(vjust=-0.2), axis.title.y=element_text(vjust=1.5),
+          title=element_text(vjust=1.2, family="Source Sans Pro Semibold"),
+          panel.border = element_blank(), axis.line=element_blank(),
+          panel.grid.minor=element_blank(),
+          panel.grid.major.y = element_blank(),
+          panel.grid.major.x = element_line(size=0.5, colour="grey80"),
+          axis.ticks=element_blank(),
+          legend.position="bottom", 
+          axis.title=element_text(size=rel(0.8), family="Source Sans Pro Semibold"),
+          strip.text=element_text(size=rel(1), family="Source Sans Pro Semibold"),
+          strip.background=element_rect(fill="#ffffff", colour=NA),
+          panel.spacing.y=unit(1.5, "lines"),
+          legend.key = element_blank())
+  
+  ret
+}
+
+# Calculate where to put the dotted lines that show up every three entries
+x.breaks <- seq(length(employee_records_startdate$Fullname) + 0.5 - 3, 0, by=-3)
+
+# Build plot
+timeline_p1 <- ggplot(employee_records_startdate.long, aes(x=Fullname, y=employee_records_startdate.date, colour=Status)) +  
+
+  geom_line(size=6) + 
+  geom_vline(xintercept=x.breaks, colour="grey80", linetype="dotted") + 
+  guides(colour=guide_legend(title=NULL)) +
+  labs(x=NULL, y=NULL) + coord_flip() +
+  #scale_y_date(date_breaks="2 years") +
+  scale_y_date(date_breaks="2 years", date_labels = ("%Y")) +
+  #theme_gantt()
+theme_solid()  + theme(axis.text.x=element_text(angle=0, vjust = 1, size = 11, face = 'bold'), axis.text.y = element_text(size = 11, face = 'bold'), legend.text = element_text(size=12)) + ggtitle("Employment Period") + theme(plot.title = 
+element_text(hjust = 0.5, size = 14, color = "darkblue"))
+timeline_p1 + scale_fill_manual("legend", values = "black")
+```
+
+#Repeating to create gantt chart for employee's employment start date by department 
+
+```{r}
+employee_records <- read_excel("EmployeeRecords.xlsx", sheet = "Employee Records")
+employee_records_startdate <- employee_records
+
+glimpse(employee_records_startdate) 
+```
+
+```{r}
+employee_records_startdate <- employee_records %>% 
+    tidyr::unite('Fullname',c("FirstName", "LastName"), sep=" ")
+```
+
+```{r}
+employee_records_startdate <- employee_records %>% 
+    tidyr::unite('Fullname',c("FirstName", "LastName"), sep=" ")
+employee_records_startdate <- employee_records_startdate %>%
+  mutate(Status = case_when(
+    str_detect(Fullname, "Rachel Pantanal") ~ "Flagged",
+    str_detect(Fullname, "Ruscella Mies Haber") ~ "Flagged",
+    str_detect(Fullname, "Hennie Osvaldo") ~ "Flagged",
+    str_detect(Fullname, "Isia Vann") ~ "Flagged",
+    str_detect(Fullname, "Loreto Bodrogi") ~ "Flagged",
+    str_detect(Fullname, "Inga Ferro") ~ "Flagged",
+    str_detect(Fullname, "Minke Mies") ~ "Flagged",
+    TRUE ~ "Not flagged"
+    ))
+```
+
+
+```{r}
+employee_records_startdate <- subset(employee_records_startdate , select = -c(BirthDate, BirthCountry, Gender, CitizenshipCountry, CitizenshipBasis, CitizenshipStartDate, PassportCountry, PassportIssueDate, PassportExpirationDate, CurrentEmploymentTitle, EmailAddress, MilitaryDischargeDate, MilitaryDischargeType, MilitaryServiceBranch))
+
+employee_records_startdate$KidnappingStartDate <- ymd('2014-01-20')
+employee_records_startdate$CurrentEmploymentStartDate <- ymd(employee_records_startdate$CurrentEmploymentStartDate)
+
+#filter is added to improve focus on employees who are flagged
+employee_records_startdate <- employee_records_startdate %>% filter(Status == "Flagged")
+employee_records_startdate <- subset(employee_records_startdate,  select = -c(Status))
+employee_records_startdate
+```
+
+```{R}
+employee_records_startdate.long <- employee_records_startdate %>%
+  mutate(Start = ymd(CurrentEmploymentStartDate),
+         End = ymd(KidnappingStartDate)) %>%
+  gather(date.type, employee_records_startdate.date, -c(CurrentEmploymentType, Fullname)) %>%
+  arrange(date.type, employee_records_startdate.date) %>%
+  mutate(Fullname = factor(Fullname, levels=rev(unique(Fullname)), ordered=TRUE))
+```
+
+```{R}
+# Custom theme for making a clean Gantt chart
+theme_update(plot.title = element_text(hjust = 0.5))
+theme_gantt <- function(base_size=11, base_family="Source Sans Pro Light") {
+  ret <- theme_bw(base_size, base_family) %+replace%
+    theme(panel.background = element_rect(fill="#ffffff", colour=NA),
+          axis.title.x=element_text(vjust=-0.2), axis.title.y=element_text(vjust=1.5),
+          title=element_text(vjust=1.2, family="Source Sans Pro Semibold"),
+          panel.border = element_blank(), axis.line=element_blank(),
+          panel.grid.minor=element_blank(),
+          panel.grid.major.y = element_blank(),
+          panel.grid.major.x = element_line(size=0.5, colour="grey80"),
+          axis.ticks=element_blank(),
+          legend.position="bottom", 
+          axis.title=element_text(size=rel(0.8), family="Source Sans Pro Semibold"),
+          strip.text=element_text(size=rel(1), family="Source Sans Pro Semibold"),
+          strip.background=element_rect(fill="#ffffff", colour=NA),
+          panel.spacing.y=unit(1.5, "lines"),
+          legend.key = element_blank())
+  
+  ret
+}
+
+# Calculate where to put the dotted lines that show up every three entries
+x.breaks <- seq(length(employee_records_startdate$Fullname) + 0.5 - 3, 0, by=-3)
+
+# Build plot
+timeline_p2 <- ggplot(employee_records_startdate.long, aes(x=Fullname, y=employee_records_startdate.date, colour=CurrentEmploymentType)) + 
+  geom_line(size=6) + 
+  geom_vline(xintercept=x.breaks, colour="grey80", linetype="dotted") + 
+  guides(colour=guide_legend(title=NULL)) +
+  labs(x=NULL, y=NULL) + coord_flip() +
+  #scale_y_date(date_breaks="2 years") +
+  scale_y_date(date_breaks="1 year", date_labels = ("%Y")) +
+  #theme_gantt()
+theme_economist() + scale_color_brewer(palette = "Dark2") + theme(axis.text.x=element_text(angle=0, vjust = 1, size = 12, face = 'bold'), axis.text.y = element_text(size = 12, face = 'bold'), legend.text = element_text(size=12)) + ggtitle("Employment Period") + theme(plot.title = 
+element_text(hjust = 0.5, size = 18, color = "darkblue"))
+timeline_p2  
+```
+#using patchwork
+
+```{r}
+patchwork <- timeline_p2 / timeline_Kronosmilitary
+
+patchwork + 
+  plot_annotation(title = 'Timeline graphs of GAStech employees with suspicious email',
+                  theme = theme(plot.title = element_text(size = 18))) & 
+  theme(text = element_text('Roboto Condensed'))
+```
+
